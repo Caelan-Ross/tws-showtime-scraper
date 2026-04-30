@@ -8,7 +8,7 @@ from flask import Flask, render_template, jsonify
 
 app = Flask(__name__)
 
-IMAX_JSON = "/data/showtimes.json"
+tws_JSON = "/data/showtimes.json"
 ANIME_JSON = "/data/cineplex_anime.json"
 SCRAPER_DIR = "/opt/imax-scraper"
 
@@ -26,20 +26,20 @@ def _load_json(path):
 
 @app.route("/")
 def index():
-    imax_data = _load_json(IMAX_JSON) or {}
+    tws_data = _load_json(tws_JSON) or {}
     anime_data = _load_json(ANIME_JSON) or {}
 
-    imax_schedule = imax_data.get("schedule", {})
+    tws_schedule = tws_data.get("schedule", {})
     # Only show current weekend in the web view (first 3 days)
-    imax_this_week = dict(list(imax_schedule.items())[:3])
+    tws_this_week = dict(list(tws_schedule.items())[:3])
 
     anime_movies = anime_data.get("movies", [])
 
     return render_template(
         "index.html",
-        imax_days=imax_this_week,
+        tws_days=tws_this_week,
         anime_movies=anime_movies,
-        imax_scraped_at=imax_data.get("scraped_at"),
+        tws_scraped_at=tws_data.get("scraped_at"),
         anime_scraped_at=anime_data.get("scraped_at"),
         now=datetime.now(),
     )
@@ -48,7 +48,7 @@ def index():
 @app.route("/refresh", methods=["POST"])
 def refresh():
     """Trigger both scrapers. Returns JSON status."""
-    results = {"imax": None, "cineplex": None}
+    results = {"tws": None, "cineplex": None}
 
     try:
         subprocess.run(
@@ -58,11 +58,11 @@ def refresh():
             check=True,
             capture_output=True,
         )
-        results["imax"] = "ok"
+        results["tws"] = "ok"
     except subprocess.CalledProcessError as e:
-        results["imax"] = f"error: {e.stderr.decode()[:200]}"
+        results["tws"] = f"error: {e.stderr.decode()[:200]}"
     except subprocess.TimeoutExpired:
-        results["imax"] = "error: timeout"
+        results["tws"] = "error: timeout"
 
     try:
         subprocess.run(

@@ -12,7 +12,7 @@
             <div>
                 <h1>🎬 Movie Schedule</h1>
                 <div class="meta">
-                    {% if imax_scraped_at %}IMAX updated {{ imax_scraped_at[:19].replace('T', ' ') }}{% endif %}
+                    {% if tws_scraped_at %}TWS updated {{ tws_scraped_at[:19].replace('T', ' ') }}{% endif %}
                     {% if anime_scraped_at %} · Anime updated {{ anime_scraped_at[:19].replace('T', ' ') }}{% endif %}
                 </div>
             </div>
@@ -23,8 +23,8 @@
         </header>
 
         <h2>TELUS World of Science IMAX</h2>
-        {% if imax_days %}
-            {% for date_str, day in imax_days.items() %}
+        {% if tws_days %}
+            {% for date_str, day in tws_days.items() %}
                 <div class="day">
                     <div class="day-label">📅 {{ day.label }}</div>
                     {% set filtered_films = day.films | rejectattr('rating', 'equalto', 'General') | list %}
@@ -44,7 +44,7 @@
                 </div>
             {% endfor %}
         {% else %}
-            <div class="empty">No IMAX data available. Try refreshing.</div>
+            <div class="empty">No tws data available. Try refreshing.</div>
         {% endif %}
 
         <h2>Cineplex Anime</h2>

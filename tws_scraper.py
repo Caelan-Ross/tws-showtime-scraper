@@ -74,7 +74,7 @@ def scrape():
         )
 
     total = sum(len(v["films"]) for v in results.values())
-    print(f"[imax] Done — {total} unique films across {len(results)} days")
+    print(f"[tws] Done — {total} unique films across {len(results)} days")
     return results
 
 
