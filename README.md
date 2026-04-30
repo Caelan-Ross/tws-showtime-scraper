@@ -1,22 +1,37 @@
-# TWS Showtime Scraper
+# Movie Schedule Scraper
 
-A lightweight Python scraper that pulls IMAX showtime data from the TELUS World of Science Edmonton booking system and sends a weekly HTML email digest.
+A Python scraper and local web UI for tracking IMAX showtimes at TELUS World of Science Edmonton and anime releases at Cineplex theatres. Sends a weekly email digest, exposes a self-hosted dashboard, and caches poster images locally.
 
 ---
 
 ## Overview
 
-The TELUS World of Science Edmonton IMAX calendar is powered by the Vantix ticketing API. This scraper hits that API directly, aggregates showtimes by film, filters out General-rated documentaries, and emails a formatted digest every Monday morning covering the upcoming Friday, Saturday, and Sunday.
+Two scrapers run on a weekly schedule:
 
-A full two-week JSON snapshot (both weekends) is also saved locally for reference.
+| Source | Method | Output |
+|---|---|---|
+| TELUS World of Science (TWS) | Vantix API direct | IMAX showtimes for the next two weekends |
+| Cineplex Film Series page | HTML scrape (BeautifulSoup) | Upcoming and current anime movies |
+
+Results are saved to JSON, emailed as a combined HTML digest every Monday morning, and rendered on a local web dashboard with poster art.
+
+---
+
+## Features
+
+- Weekly email digest combining both sources
+- Local web UI at `http://<host>:5000` with card-based layout
+- On-demand refresh button — triggers both scrapers from the browser
+- Poster images cached locally, orphans cleaned up on each run
+- Modular: scrapers, email builder, and web UI run independently
 
 ---
 
 ## Requirements
 
 - Python 3.10+
-- `requests` library
 - A Gmail account with an app password
+- Pip packages: `requests`, `beautifulsoup4`, `flask`
 
 ---
 
@@ -32,12 +47,12 @@ cd tws-showtime-scraper
 ### 2. Install dependencies
 
 ```bash
-pip3 install requests --break-system-packages
+pip3 install requests beautifulsoup4 flask --break-system-packages
 ```
 
 ### 3. Create the config file
 
-Create `config.py` in the project root. This file is excluded from version control.
+Create `config.py` in the project root (excluded from version control):
 
 ```python
 GMAIL_USER = "you@gmail.com"
@@ -62,17 +77,28 @@ mkdir -p /data
 
 ## Usage
 
-Run manually:
+### Run everything (scrapers + email)
 
 ```bash
-python3 scraper.py
+python3 main.py
 ```
 
-This will:
+This runs both scrapers, writes JSON output, and sends the email digest.
 
-1. Fetch showtimes for the current and following weekend (6 days total)
-2. Save a full JSON snapshot to `/data/showtimes.json`
-3. Send an HTML email covering this weekend only (Fri/Sat/Sun), excluding General-rated films
+### Run individual scrapers
+
+```bash
+python3 tws_scraper.py        # TWS IMAX only
+python3 cineplex_scraper.py   # Cineplex anime only
+```
+
+### Run the web UI
+
+```bash
+python3 web.py
+```
+
+Then browse to `http://<host>:5000`.
 
 ---
 
@@ -85,16 +111,46 @@ crontab -e
 ```
 
 ```
-0 8 * * 1 python3 /opt/imax-scraper/scraper.py >> /var/log/imax-scraper.log 2>&1
+0 8 * * 1 cd /opt/imax-scraper && python3 main.py >> /var/log/imax-scraper.log 2>&1
+```
+
+The `cd` matters — Python needs the working directory to find sibling modules.
+
+### Web UI as a systemd service
+
+Create `/etc/systemd/system/movie-web.service`:
+
+```ini
+[Unit]
+Description=Movie Schedule Web UI
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/imax-scraper
+ExecStart=/usr/bin/python3 /opt/imax-scraper/web.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/movie-web.log
+StandardError=append:/var/log/movie-web.log
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+
+```bash
+systemctl daemon-reload
+systemctl enable --now movie-web
 ```
 
 ---
 
 ## Output
 
-### JSON
-
-Saved to `/data/showtimes.json` after each run:
+### TWS JSON — `/data/showtimes.json`
 
 ```json
 {
@@ -116,9 +172,35 @@ Saved to `/data/showtimes.json` after each run:
 }
 ```
 
-### Email
+### Cineplex anime JSON — `/data/cineplex_anime.json`
 
-A dark-themed HTML email listing each day's non-General films with title, rating, duration, showtimes, and a purchase link. Only the current weekend is included in the email.
+```json
+{
+  "scraped_at": "2026-04-29T08:00:00",
+  "movies": [
+    {
+      "title": "Attack on Titan: THE LAST ATTACK (Japanese w/ e.s.t)",
+      "status": "Coming Soon",
+      "release_date": "Sunday, May 17, 2026",
+      "poster_url": "https://www.cineplex.com/_next/image?url=...",
+      "detail_url": "https://www.cineplex.com/movie/attack-on-titan-the-last-attack-japanese-w-es",
+      "local_poster": "posters/attack-on-titan-the-last-attack-japanese-w-e-s-t.jpg"
+    }
+  ]
+}
+```
+
+### Email digest
+
+Combined HTML email with TWS showtimes (current weekend, non-General films) and the full Cineplex anime listing. Posters embedded inline as CID attachments so they render even without external image loading.
+
+### Web dashboard
+
+Single-page dark-themed UI:
+
+- TWS section: day-by-day cards with title, rating, duration, and showtimes
+- Cineplex section: poster grid with title, status, and release date
+- Refresh button: triggers both scrapers as subprocesses, reloads on success
 
 ---
 
@@ -126,29 +208,68 @@ A dark-themed HTML email listing each day's non-General films with title, rating
 
 ```
 tws-showtime-scraper/
-├── scraper.py       # Main scraper and email sender
-├── config.py        # Credentials (not committed)
-├── Dockerfile       # Unused, kept for reference
+├── main.py                  # Orchestrator — runs scrapers + email
+├── tws_scraper.py           # TWS IMAX scraper
+├── cineplex_scraper.py      # Cineplex anime scraper
+├── email_builder.py         # Combined HTML email + sender
+├── web.py                   # Flask web UI
+├── config.py                # Credentials (not committed)
+├── templates/
+│   └── index.html
+├── static/
+│   ├── style.css
+│   ├── app.js
+│   └── posters/             # Cached anime posters (not committed)
 ├── .gitignore
 └── README.md
 ```
 
 ---
 
-## API Details
+## API and Scraping Details
 
-The scraper targets the Vantix scheduling API used by the TELUS World of Science booking system:
+### TWS — Vantix API
 
 ```
 GET https://www.onlinebookings.edmontonscience.com/api/schedules?tagId=64&start=YYYY-MM-DD
 ```
 
-No authentication is required. The `Referer` and `X-Requested-With` headers are included to match expected browser behaviour.
+No authentication. `Referer` and `X-Requested-With` headers match expected browser behaviour.
+
+### Cineplex — Film Series page
+
+```
+GET https://www.cineplex.com/events/film-series
+```
+
+The page is server-rendered (Next.js SSR), so a plain HTTP fetch + BeautifulSoup parse works without a headless browser. Anime listings are always under subcategory index `0`. Posters are pulled from the underlying `mediafiles.cineplex.com` URLs (extracted from the `_next/image` proxy params) to bypass the proxy's whitelisted-width restrictions.
 
 ---
 
 ## Notes
 
-- General-rated films are filtered out of the email. They are still saved to the JSON snapshot.
+- General-rated films are filtered out of the TWS email digest but kept in the JSON snapshot.
 - Films with the same `itemId` across multiple time slots are merged into a single entry with a list of showtimes.
+- Cineplex poster cache uses orphan cleanup — files for movies no longer on the page are removed on each scrape. Files for movies still listed are skipped (not re-downloaded) for speed.
 - The scraper runs bare Python on the host, no Docker required.
+- Web UI listens on `0.0.0.0:5000` for LAN access. Pair with local DNS (e.g. `movie-scraper.home.arpa` via Pi-hole) for clean URLs.
+
+---
+
+## Optional: Local DNS and Homepage integration
+
+Add a Pi-hole local DNS record:
+
+```
+movie-scraper.home.arpa → <lxc-ip>
+```
+
+Then add to your Homepage `services.yaml`:
+
+```yaml
+- Movie Scraper:
+    href: http://movie-scraper.home.arpa:5000
+    description: Local IMAX + Cineplex anime listings
+    icon: mdi-movie-open
+    siteMonitor: http://movie-scraper.home.arpa:5000
+```
