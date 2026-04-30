@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movie Schedule</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>🎬 Movie Schedule</h1>
+                <div class="meta">
+                    {% if imax_scraped_at %}IMAX updated {{ imax_scraped_at[:19].replace('T', ' ') }}{% endif %}
+                    {% if anime_scraped_at %} · Anime updated {{ anime_scraped_at[:19].replace('T', ' ') }}{% endif %}
+                </div>
+            </div>
+            <div>
+                <button class="refresh-btn" id="refreshBtn">↻ Refresh</button>
+                <div class="status" id="status"></div>
+            </div>
+        </header>
+
+        <h2>TELUS World of Science IMAX</h2>
+        {% if imax_days %}
+            {% for date_str, day in imax_days.items() %}
+                <div class="day">
+                    <div class="day-label">📅 {{ day.label }}</div>
+                    {% set filtered_films = day.films | rejectattr('rating', 'equalto', 'General') | list %}
+                    {% if filtered_films %}
+                        {% for film in filtered_films %}
+                            <div class="film">
+                                <div class="film-title">
+                                    <a href="{{ film.item_url }}" target="_blank">{{ film.title }}</a>
+                                </div>
+                                <div class="film-meta">{{ film.rating or 'NR' }} · {{ film.duration }}</div>
+                                <div class="film-times">{{ film.showtimes | join(' · ') }}</div>
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="empty">No non-General films scheduled.</div>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty">No IMAX data available. Try refreshing.</div>
+        {% endif %}
+
+        <h2>Cineplex Anime</h2>
+        {% if anime_movies %}
+            <div class="grid">
+                {% for movie in anime_movies %}
+                    <div class="card">
+                        <a href="{{ movie.detail_url or '#' }}" target="_blank">
+                            {% if movie.local_poster %}
+                                <img class="poster" src="{{ url_for('static', filename=movie.local_poster) }}" alt="{{ movie.title }}">
+                            {% else %}
+                                <div class="poster-placeholder">No poster</div>
+                            {% endif %}
+                            <div class="card-body">
+                                <div class="card-title">{{ movie.title }}</div>
+                                <div class="card-status">{{ movie.status or '' }}</div>
+                                <div class="card-date">{{ movie.release_date or '' }}</div>
+                            </div>
+                        </a>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="empty">No anime listings. Try refreshing.</div>
+        {% endif %}
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
