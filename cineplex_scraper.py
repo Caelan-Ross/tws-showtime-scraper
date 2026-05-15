@@ -1,6 +1,6 @@
-"""Scrapes the Cineplex Film Series page for anime listings.
+"""Fetches anime/Japanese-language movies from the Cineplex theatrical API.
 
-Anime is always subcategory 0. Posters indexed 0..MAX_POSTERS-1.
+Replaces the old HTML scraper with a direct API call.
 Posters are downloaded to STATIC_POSTERS_DIR for local serving.
 """
 
@@ -9,112 +9,113 @@ import re
 import requests
 import json
 from datetime import datetime
-from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs, unquote
 
-CINEPLEX_URL = "https://www.cineplex.com/events/film-series"
-SUBCATEGORY_INDEX = 0
-MAX_POSTERS = 10
+API_URL = "https://apis.cineplex.com/prod/cpx/theatrical/api/v1/movies"
+API_KEY = "dcdac5601d864addbc2675a2e96cb1f8"
 OUTPUT = "/data/cineplex_anime.json"
 STATIC_POSTERS_DIR = "/opt/imax-scraper/static/posters"
 
-HEADERS = {
+API_HEADERS = {
+    "Ocp-Apim-Subscription-Key": API_KEY,
+    "Origin": "https://www.cineplex.com",
+    "Referer": "https://www.cineplex.com/",
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-CA,en;q=0.9",
 }
 
 IMAGE_HEADERS = {
-    "User-Agent": HEADERS["User-Agent"],
+    "User-Agent": API_HEADERS["User-Agent"],
     "Referer": "https://www.cineplex.com/",
 }
+
+TAKE = 200  # grab everything in one request
+
+
+def _is_anime(movie):
+    """Match anime by genre tag or title keyword."""
+    genres = movie.get("genres") or []
+    name = (movie.get("name") or "").lower()
+    return "Anime" in genres or "anime" in name
 
 
 def scrape_anime_movies():
     try:
-        resp = requests.get(CINEPLEX_URL, headers=HEADERS, timeout=30)
+        resp = requests.get(
+            API_URL,
+            params={
+                "language": "en-us",
+                "skip": 0,
+                "take": TAKE,
+                "filterEvents": "false",
+                "removeIrrelevantFilms": "true",
+            },
+            headers=API_HEADERS,
+            timeout=30,
+        )
         resp.raise_for_status()
+        data = resp.json()
     except requests.RequestException as e:
-        print(f"[cineplex] Fetch failed: {e}")
+        print(f"[cineplex] API fetch failed: {e}")
         _write_output([], error=str(e))
         return []
 
-    soup = BeautifulSoup(resp.text, "html.parser")
-    movies = []
-    kept_files = set()
+    all_movies = data.get("items", [])
+    anime = [m for m in all_movies if _is_anime(m)]
+    anime.sort(key=lambda m: m.get("releaseDate") or "9999")
+
     os.makedirs(STATIC_POSTERS_DIR, exist_ok=True)
+    kept_files = set()
+    results = []
 
-    for i in range(MAX_POSTERS):
-        prefix = f"event-subcategory-{SUBCATEGORY_INDEX}-poster-{i}"
-        container = soup.find(attrs={"data-testid": prefix})
-        if container is None:
-            break
+    for movie in anime:
+        poster_url = movie.get("mediumPosterImageUrl")
+        title = movie["name"]
+        local_path = _download_poster(title, poster_url)
 
-        movie = _parse_poster(container, prefix)
-        if movie:
-            local_path = _download_poster(movie["title"], movie.get("poster_url"))
-            movie["local_poster"] = local_path
-            if local_path:
-                kept_files.add(os.path.basename(local_path))
-            movies.append(movie)
+        entry = {
+            "title": title,
+            "status": _status_label(movie),
+            "release_date": _format_date(movie.get("releaseDate")),
+            "poster_url": poster_url,
+            "detail_url": movie.get("detailPageUrl"),
+            "local_poster": local_path,
+            "genres": movie.get("genres", []),
+            "language": movie.get("language"),
+            "runtime": movie.get("runtimeInMinutes"),
+        }
+
+        if local_path:
+            kept_files.add(os.path.basename(local_path))
+        results.append(entry)
 
     _remove_orphan_posters(kept_files)
-    _write_output(movies)
-    print(f"[cineplex] Done — {len(movies)} anime movies")
-    return movies
+    _write_output(results)
+    print(f"[cineplex] Done — {len(results)} anime movies (from {len(all_movies)} total)")
+    return results
 
 
-def _parse_poster(container, prefix):
-    title_tag = container.find(attrs={"data-testid": f"{prefix}-event-title"})
-    title = title_tag.get_text(strip=True) if title_tag else None
+def _status_label(movie):
+    if movie.get("isNowPlaying"):
+        return "Now Playing"
+    if movie.get("isComingSoon"):
+        return "Coming Soon"
+    return None
 
-    status_tag = container.find(
-        attrs={"data-testid": f"{prefix}-showtime-availability"}
-    )
-    status = status_tag.get_text(strip=True) if status_tag else None
 
-    date_tag = container.find(attrs={"data-testid": f"{prefix}-release-date"})
-    release_date = date_tag.get_text(strip=True) if date_tag else None
-
-    poster_url = None
-    img_container = container.find(
-        "div",
-        class_=lambda c: c and c.startswith("MoviePosterImage_imageContainer"),
-    )
-    if img_container:
-        img = img_container.find("img")
-        if img:
-            src = img.get("src")
-            if src:
-                poster_url = (
-                    src if src.startswith("http") else f"https://www.cineplex.com{src}"
-                )
-
-    detail_url = None
-    link = container.find(
-        "a", class_=lambda c: c and "MoviePosterImage_linkContainer" in c
-    )
-    if link and link.get("href"):
-        href = link["href"]
-        detail_url = href if href.startswith("http") else f"https://www.cineplex.com{href}"
-
-    if not title:
+def _format_date(date_str):
+    if not date_str:
         return None
-
-    return {
-        "title": title,
-        "status": status,
-        "release_date": release_date,
-        "poster_url": poster_url,
-        "detail_url": detail_url,
-    }
+    try:
+        dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        return dt.strftime("%B %-d, %Y")
+    except (ValueError, AttributeError):
+        return date_str
 
 
 def _slugify(text):
-    """Convert a title to a safe filename."""
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
     return slug[:60] or "poster"
 
@@ -123,22 +124,14 @@ def _download_poster(title, url):
     if not url:
         return None
 
-    parsed = urlparse(url)
-    if parsed.path == "/_next/image":
-        qs = parse_qs(parsed.query)
-        real_url = qs.get("url", [None])[0]
-        if real_url:
-            url = unquote(real_url)
-
     slug = _slugify(title)
 
-    # Check if any existing file matches this slug — skip download if so
+    # Skip download if we already have this poster
     for existing in os.listdir(STATIC_POSTERS_DIR):
         if existing.startswith(f"{slug}."):
             return f"posters/{existing}"
 
-    filename = f"{slug}.jpg"
-    filepath = os.path.join(STATIC_POSTERS_DIR, filename)
+    filepath = os.path.join(STATIC_POSTERS_DIR, f"{slug}.jpg")
 
     try:
         r = requests.get(url, headers=IMAGE_HEADERS, timeout=15)
@@ -163,6 +156,7 @@ def _download_poster(title, url):
 def _write_output(movies, error=None):
     payload = {
         "scraped_at": datetime.now().isoformat(),
+        "source": "cineplex-api",
         "movies": movies,
     }
     if error:
@@ -170,8 +164,8 @@ def _write_output(movies, error=None):
     with open(OUTPUT, "w") as f:
         json.dump(payload, f, indent=2)
 
+
 def _remove_orphan_posters(kept_files):
-    """Remove poster files not in the current scrape."""
     if not os.path.isdir(STATIC_POSTERS_DIR):
         return
     removed = 0
@@ -187,6 +181,7 @@ def _remove_orphan_posters(kept_files):
             print(f"[cineplex] Failed to remove {filepath}: {e}")
     if removed:
         print(f"[cineplex] Removed {removed} orphaned poster(s)")
+
 
 if __name__ == "__main__":
     scrape_anime_movies()
