@@ -15,6 +15,23 @@ HEADERS = {
     "X-Requested-With": "XMLHttpRequest",
 }
 
+MIN_RUNTIME_MINUTES = 60
+
+# Title substrings that indicate special events rather than regular screenings
+_SKIP_TERMS = (
+    "Sensory Friendly Screening",
+    "Private Screening",
+    "School Group",
+)
+
+
+def _runtime_minutes(duration_str):
+    """Parse '45 minutes' → 45. Returns None if unparseable."""
+    try:
+        return int(str(duration_str).split()[0])
+    except (ValueError, IndexError):
+        return None
+
 
 def get_target_dates():
     today = datetime.today()
@@ -46,6 +63,12 @@ def scrape():
             data = fetch_schedule(date_str)
             merged = {}
             for e in data:
+                name = e.get("name", "")
+                if any(p.lower() in name.lower() for p in _SKIP_TERMS):
+                    continue
+                runtime = _runtime_minutes(e.get("duration"))
+                if runtime is not None and runtime < MIN_RUNTIME_MINUTES:
+                    continue
                 item_id = e["itemId"]
                 time = e.get("formattedStartTime")
                 if item_id not in merged:
