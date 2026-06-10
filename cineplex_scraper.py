@@ -11,6 +11,9 @@ import json
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs, unquote
 
+ANILIST_URL = "https://graphql.anilist.co"
+_anilist_cache = {}  # title -> bool
+
 API_URL = "https://apis.cineplex.com/prod/cpx/theatrical/api/v1/movies"
 API_KEY = "dcdac5601d864addbc2675a2e96cb1f8"
 OUTPUT = "/data/cineplex_anime.json"
@@ -34,11 +37,45 @@ IMAGE_HEADERS = {
 TAKE = 200  # grab everything in one request
 
 
+def _strip_qualifiers(title):
+    """Remove trailing parentheticals like '(Japanese w/e.s.t)' for cleaner lookups."""
+    return re.sub(r"\s*\([^)]*\)\s*$", "", title).strip()
+
+
+def _in_anilist(title):
+    """Return True if AniList recognises the title as anime. Results are cached."""
+    cleaned = _strip_qualifiers(title)
+    if cleaned in _anilist_cache:
+        return _anilist_cache[cleaned]
+
+    query = """
+    query ($search: String) {
+      Media(search: $search, type: ANIME) { id }
+    }
+    """
+    try:
+        resp = requests.post(
+            ANILIST_URL,
+            json={"query": query, "variables": {"search": cleaned}},
+            timeout=10,
+        )
+        found = resp.json().get("data", {}).get("Media") is not None
+    except Exception:
+        found = False
+
+    _anilist_cache[cleaned] = found
+    return found
+
+
 def _is_anime(movie):
-    """Match anime by genre tag or title keyword."""
+    """Match anime by genre tag, title keyword, or AniList lookup."""
     genres = movie.get("genres") or []
-    name = (movie.get("name") or "").lower()
-    return "Anime" in genres or "anime" in name
+    name = movie.get("name") or ""
+    if "Anime" in genres or "anime" in name.lower():
+        return True
+    if "japanese" in name.lower():
+        return _in_anilist(name)
+    return False
 
 
 def scrape_anime_movies():
