@@ -9,44 +9,29 @@ import re
 import requests
 import json
 from datetime import datetime
-from urllib.parse import urlparse, parse_qs, unquote
+from constants import (
+    CINEPLEX_API_URL,
+    CINEPLEX_API_HEADERS,
+    CINEPLEX_IMAGE_HEADERS,
+    CINEPLEX_OUTPUT,
+    CINEPLEX_TAKE,
+    STATIC_POSTERS_DIR,
+    ANILIST_URL,
+)
 
-ANILIST_URL = "https://graphql.anilist.co"
-_anilist_cache = {}  # title -> bool
-
-API_URL = "https://apis.cineplex.com/prod/cpx/theatrical/api/v1/movies"
-API_KEY = "dcdac5601d864addbc2675a2e96cb1f8"
-OUTPUT = "/data/cineplex_anime.json"
-STATIC_POSTERS_DIR = "/opt/imax-scraper/static/posters"
-
-API_HEADERS = {
-    "Ocp-Apim-Subscription-Key": API_KEY,
-    "Origin": "https://www.cineplex.com",
-    "Referer": "https://www.cineplex.com/",
-    "User-Agent": (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    ),
-}
-
-IMAGE_HEADERS = {
-    "User-Agent": API_HEADERS["User-Agent"],
-    "Referer": "https://www.cineplex.com/",
-}
-
-TAKE = 200  # grab everything in one request
+_anilistCache = {}
 
 
-def _strip_qualifiers(title):
+def _stripQualifiers(title):
     """Remove trailing parentheticals like '(Japanese w/e.s.t)' for cleaner lookups."""
     return re.sub(r"\s*\([^)]*\)\s*$", "", title).strip()
 
 
-def _in_anilist(title):
+def _inAnilist(title):
     """Return True if AniList recognises the title as anime. Results are cached."""
-    cleaned = _strip_qualifiers(title)
-    if cleaned in _anilist_cache:
-        return _anilist_cache[cleaned]
+    cleaned = _stripQualifiers(title)
+    if cleaned in _anilistCache:
+        return _anilistCache[cleaned]
 
     query = """
     query ($search: String) {
@@ -63,78 +48,78 @@ def _in_anilist(title):
     except Exception:
         found = False
 
-    _anilist_cache[cleaned] = found
+    _anilistCache[cleaned] = found
     return found
 
 
-def _is_anime(movie):
+def _isAnime(movie):
     """Match anime by genre tag, title keyword, or AniList lookup."""
     genres = movie.get("genres") or []
     name = movie.get("name") or ""
     if "Anime" in genres or "anime" in name.lower():
         return True
     if "japanese" in name.lower():
-        return _in_anilist(name)
+        return _inAnilist(name)
     return False
 
 
-def scrape_anime_movies():
+def scrapeAnimeMovies():
     try:
         resp = requests.get(
-            API_URL,
+            CINEPLEX_API_URL,
             params={
                 "language": "en-us",
                 "skip": 0,
-                "take": TAKE,
+                "take": CINEPLEX_TAKE,
                 "filterEvents": "false",
                 "removeIrrelevantFilms": "true",
             },
-            headers=API_HEADERS,
+            headers=CINEPLEX_API_HEADERS,
             timeout=30,
         )
         resp.raise_for_status()
         data = resp.json()
     except requests.RequestException as e:
         print(f"[cineplex] API fetch failed: {e}")
-        _write_output([], error=str(e))
+        _writeOutput([], error=str(e))
         return []
 
-    all_movies = data.get("items", [])
-    anime = [m for m in all_movies if _is_anime(m)]
+    allMovies = data.get("items", [])
+    anime = [m for m in allMovies if _isAnime(m)]
     anime.sort(key=lambda m: m.get("releaseDate") or "9999")
 
     os.makedirs(STATIC_POSTERS_DIR, exist_ok=True)
-    kept_files = set()
+    keptFiles = set()
     results = []
 
     for movie in anime:
-        poster_url = movie.get("mediumPosterImageUrl")
+        posterUrl = movie.get("mediumPosterImageUrl")
         title = movie["name"]
-        local_path = _download_poster(title, poster_url)
+        localPath = _downloadPoster(title, posterUrl)
 
         entry = {
             "title": title,
-            "status": _status_label(movie),
-            "release_date": _format_date(movie.get("releaseDate")),
-            "poster_url": poster_url,
+            "status": _statusLabel(movie),
+            "release_date": _formatDate(movie.get("releaseDate")),
+            "poster_url": posterUrl,
             "detail_url": movie.get("detailPageUrl"),
-            "local_poster": local_path,
+            "local_poster": localPath,
             "genres": movie.get("genres", []),
             "language": movie.get("language"),
             "runtime": movie.get("runtimeInMinutes"),
         }
 
-        if local_path:
-            kept_files.add(os.path.basename(local_path))
+        if localPath:
+            keptFiles.add(os.path.basename(localPath))
         results.append(entry)
 
-    _remove_orphan_posters(kept_files)
-    _write_output(results)
-    print(f"[cineplex] Done — {len(results)} anime movies (from {len(all_movies)} total)")
+    _removeOrphanPosters(keptFiles)
+    _writeOutput(results)
+    print(f"[cineplex] Done — {len(results)} anime movies (from {len(allMovies)} total)")
     return results
 
 
-def _status_label(movie):
+def _statusLabel(movie):
     if movie.get("isNowPlaying"):
         return "Now Playing"
     if movie.get("isComingSoon"):
@@ -142,14 +127,14 @@ def _status_label(movie):
     return None
 
 
-def _format_date(date_str):
-    if not date_str:
+def _formatDate(dateStr):
+    if not dateStr:
         return None
     try:
-        dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(dateStr.replace("Z", "+00:00"))
         return dt.strftime("%B %-d, %Y")
     except (ValueError, AttributeError):
-        return date_str
+        return dateStr
 
 
 def _slugify(text):
@@ -157,13 +142,12 @@ def _slugify(text):
     return slug[:60] or "poster"
 
 
-def _download_poster(title, url):
+def _downloadPoster(title, url):
     if not url:
         return None
 
     slug = _slugify(title)
 
-    # Skip download if we already have this poster
     for existing in os.listdir(STATIC_POSTERS_DIR):
         if existing.startswith(f"{slug}."):
             return f"posters/{existing}"
@@ -171,11 +155,11 @@ def _download_poster(title, url):
     filepath = os.path.join(STATIC_POSTERS_DIR, f"{slug}.jpg")
 
     try:
-        r = requests.get(url, headers=IMAGE_HEADERS, timeout=15)
+        r = requests.get(url, headers=CINEPLEX_IMAGE_HEADERS, timeout=15)
         r.raise_for_status()
 
-        ct = r.headers.get("Content-Type", "image/jpeg")
-        ext = ct.split("/")[-1].split(";")[0].strip()
+        contentType = r.headers.get("Content-Type", "image/jpeg")
+        ext = contentType.split("/")[-1].split(";")[0].strip()
         if ext == "jpeg":
             ext = "jpg"
         filename = f"{slug}.{ext}"
@@ -190,7 +174,7 @@ def _download_poster(title, url):
         return None
 
 
-def _write_output(movies, error=None):
+def _writeOutput(movies, error=None):
     payload = {
         "scraped_at": datetime.now().isoformat(),
         "source": "cineplex-api",
@@ -198,16 +182,16 @@ def _write_output(movies, error=None):
     }
     if error:
         payload["error"] = error
-    with open(OUTPUT, "w") as f:
+    with open(CINEPLEX_OUTPUT, "w") as f:
         json.dump(payload, f, indent=2)
 
 
-def _remove_orphan_posters(kept_files):
+def _removeOrphanPosters(keptFiles):
     if not os.path.isdir(STATIC_POSTERS_DIR):
         return
     removed = 0
     for filename in os.listdir(STATIC_POSTERS_DIR):
-        if filename in kept_files:
+        if filename in keptFiles:
             continue
         filepath = os.path.join(STATIC_POSTERS_DIR, filename)
         try:
@@ -221,4 +205,4 @@ def _remove_orphan_posters(kept_files):
 
 
 if __name__ == "__main__":
-    scrape_anime_movies()
+    scrapeAnimeMovies()

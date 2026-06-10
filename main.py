@@ -6,22 +6,20 @@ import email_builder
 
 
 def main():
-    # Run scrapers — failures in one shouldn't block the others
     try:
-        tws_results = tws_scraper.scrape()
+        twsResults = tws_scraper.scrape()
     except Exception as e:
         print(f"[main] TWS scraper crashed: {e}")
-        tws_results = {}
+        twsResults = {}
 
     try:
-        anime_movies = cineplex_scraper.scrape_anime_movies()
+        animeMovies = cineplex_scraper.scrapeAnimeMovies()
     except Exception as e:
         print(f"[main] Cineplex scraper crashed: {e}")
-        anime_movies = []
+        animeMovies = []
 
-    # Send combined email
     try:
-        email_builder.send_email(tws_results, anime_movies)
+        email_builder.sendEmail(twsResults, animeMovies)
     except Exception as e:
         print(f"[main] Email failed: {e}")
 

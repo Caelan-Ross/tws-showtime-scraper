@@ -3,51 +3,32 @@
 import requests
 import json
 from datetime import datetime, timedelta
-
-API_URL = "https://www.onlinebookings.edmontonscience.com/api/schedules"
-TAG_ID = 64
-OUTPUT = "/data/showtimes.json"
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:149.0) Gecko/20100101 Firefox/149.0",
-    "Accept": "*/*",
-    "Referer": "https://www.onlinebookings.edmontonscience.com/imaxcalendar.aspx",
-    "X-Requested-With": "XMLHttpRequest",
-}
-
-MIN_RUNTIME_MINUTES = 60
-
-# Title substrings that indicate special events rather than regular screenings
-_SKIP_TERMS = (
-    "Sensory Friendly Screening",
-    "Private Screening",
-    "School Group",
-)
+from constants import TWS_API_URL, TWS_TAG_ID, TWS_OUTPUT, TWS_MIN_RUNTIME_MINUTES, TWS_HEADERS, TWS_SKIP_TERMS
 
 
-def _runtime_minutes(duration_str):
+def _runtimeMinutes(durationStr):
     """Parse '45 minutes' → 45. Returns None if unparseable."""
     try:
-        return int(str(duration_str).split()[0])
+        return int(str(durationStr).split()[0])
     except (ValueError, IndexError):
         return None
 
 
-def get_target_dates():
+def getTargetDates():
     today = datetime.today()
     monday = today - timedelta(days=today.weekday())
     dates = []
-    for week_offset in [0, 1]:
-        friday = monday + timedelta(days=4 + (week_offset * 7))
+    for weekOffset in [0, 1]:
+        friday = monday + timedelta(days=4 + (weekOffset * 7))
         dates += [friday, friday + timedelta(days=1), friday + timedelta(days=2)]
     return dates
 
 
-def fetch_schedule(date_str):
+def fetchSchedule(dateStr):
     r = requests.get(
-        API_URL,
-        params={"tagId": TAG_ID, "start": date_str},
-        headers=HEADERS,
+        TWS_API_URL,
+        params={"tagId": TWS_TAG_ID, "start": dateStr},
+        headers=TWS_HEADERS,
         timeout=15,
     )
     r.raise_for_status()
@@ -56,40 +37,40 @@ def fetch_schedule(date_str):
 
 def scrape():
     results = {}
-    for date in get_target_dates():
-        date_str = date.strftime("%Y-%m-%d")
+    for date in getTargetDates():
+        dateStr = date.strftime("%Y-%m-%d")
         label = date.strftime("%A %B %-d, %Y")
         try:
-            data = fetch_schedule(date_str)
+            data = fetchSchedule(dateStr)
             merged = {}
-            for e in data:
-                name = e.get("name", "")
-                if any(p.lower() in name.lower() for p in _SKIP_TERMS):
+            for entry in data:
+                name = entry.get("name", "")
+                if any(p.lower() in name.lower() for p in TWS_SKIP_TERMS):
                     continue
-                runtime = _runtime_minutes(e.get("duration"))
-                if runtime is not None and runtime < MIN_RUNTIME_MINUTES:
+                runtime = _runtimeMinutes(entry.get("duration"))
+                if runtime is not None and runtime < TWS_MIN_RUNTIME_MINUTES:
                     continue
-                item_id = e["itemId"]
-                time = e.get("formattedStartTime")
-                if item_id not in merged:
-                    merged[item_id] = {
-                        "title": e.get("name"),
-                        "rating": e.get("eventRating"),
-                        "duration": e.get("duration"),
+                itemId = entry["itemId"]
+                time = entry.get("formattedStartTime")
+                if itemId not in merged:
+                    merged[itemId] = {
+                        "title": entry.get("name"),
+                        "rating": entry.get("eventRating"),
+                        "duration": entry.get("duration"),
                         "showtimes": [],
-                        "item_url": "https:" + e["itemUrl"],
+                        "item_url": "https:" + entry["itemUrl"],
                     }
                 if time:
-                    merged[item_id]["showtimes"].append(time)
-            results[date_str] = {
+                    merged[itemId]["showtimes"].append(time)
+            results[dateStr] = {
                 "label": label,
                 "films": list(merged.values()),
             }
         except Exception as ex:
-            print(f"[imax] Failed for {date_str}: {ex}")
-            results[date_str] = {"label": label, "films": [], "error": str(ex)}
+            print(f"[imax] Failed for {dateStr}: {ex}")
+            results[dateStr] = {"label": label, "films": [], "error": str(ex)}
 
-    with open(OUTPUT, "w") as f:
+    with open(TWS_OUTPUT, "w") as f:
         json.dump(
             {"scraped_at": datetime.now().isoformat(), "schedule": results},
             f,

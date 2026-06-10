@@ -6,32 +6,24 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
-from config import GMAIL_USER, GMAIL_APP_PASSWORD, EMAIL_TO
-
-IMAGE_FETCH_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Referer": "https://www.cineplex.com/",
-}
+from constants import GMAIL_USER, GMAIL_APP_PASSWORD, EMAIL_TO, CINEPLEX_IMAGE_HEADERS
 
 
-def _fetch_image(url):
+def _fetchImage(url):
     """Returns (bytes, mime_subtype) or (None, None) on failure."""
     try:
-        r = requests.get(url, headers=IMAGE_FETCH_HEADERS, timeout=15)
+        r = requests.get(url, headers=CINEPLEX_IMAGE_HEADERS, timeout=15)
         r.raise_for_status()
-        content_type = r.headers.get("Content-Type", "image/jpeg")
-        subtype = content_type.split("/")[-1].split(";")[0].strip() or "jpeg"
+        contentType = r.headers.get("Content-Type", "image/jpeg")
+        subtype = contentType.split("/")[-1].split(";")[0].strip() or "jpeg"
         return r.content, subtype
     except requests.RequestException as e:
         print(f"[email] Image fetch failed for {url}: {e}")
         return None, None
 
 
-def _build_imax_section(imax_results):
-    if not imax_results:
+def _buildImaxSection(imaxResults):
+    if not imaxResults:
         return """
         <tr>
             <td colspan="3" style="padding:16px;color:#999;">
@@ -40,7 +32,7 @@ def _build_imax_section(imax_results):
         </tr>"""
 
     rows = ""
-    for date_str, day in imax_results.items():
+    for dateStr, day in imaxResults.items():
         rows += f"""
         <tr>
             <td colspan="3" style="background:#1a1a2e;color:#e0e0e0;padding:12px 16px;font-size:16px;font-weight:bold;border-radius:4px;">
@@ -69,9 +61,9 @@ def _build_imax_section(imax_results):
     return rows
 
 
-def _build_anime_section(anime_movies):
+def _buildAnimeSection(animeMovies):
     """Returns (html_rows, [(cid, image_bytes, subtype), ...])."""
-    if not anime_movies:
+    if not animeMovies:
         return (
             """
         <tr>
@@ -85,31 +77,31 @@ def _build_anime_section(anime_movies):
     rows = ""
     images = []
 
-    for idx, movie in enumerate(anime_movies):
-        poster_html = ""
-        poster_url = movie.get("poster_url")
+    for idx, movie in enumerate(animeMovies):
+        posterHtml = ""
+        posterUrl = movie.get("poster_url")
 
-        if poster_url:
-            img_bytes, subtype = _fetch_image(poster_url)
-            if img_bytes:
+        if posterUrl:
+            imgBytes, subtype = _fetchImage(posterUrl)
+            if imgBytes:
                 cid = f"poster_{idx}"
-                images.append((cid, img_bytes, subtype))
-                poster_html = (
+                images.append((cid, imgBytes, subtype))
+                posterHtml = (
                     f'<img src="cid:{cid}" alt="" width="80" '
                     f'style="display:block;border-radius:4px;">'
                 )
 
         status = movie.get("status") or ""
         release = movie.get("release_date") or ""
-        detail_url = movie.get("detail_url") or "#"
+        detailUrl = movie.get("detail_url") or "#"
 
         rows += f"""
         <tr style="border-bottom:1px solid #2a2a3e;">
             <td style="padding:12px 16px;width:96px;vertical-align:top;">
-                {poster_html}
+                {posterHtml}
             </td>
             <td style="padding:12px 16px;vertical-align:top;">
-                <a href="{detail_url}" style="color:#7eb8f7;text-decoration:none;font-weight:600;font-size:15px;">{movie['title']}</a>
+                <a href="{detailUrl}" style="color:#7eb8f7;text-decoration:none;font-weight:600;font-size:15px;">{movie['title']}</a>
                 <div style="color:#aaa;font-size:13px;margin-top:4px;">{status}</div>
                 <div style="color:#888;font-size:12px;margin-top:2px;">{release}</div>
             </td>
@@ -118,10 +110,10 @@ def _build_anime_section(anime_movies):
     return rows, images
 
 
-def build_email_html(imax_results, anime_movies):
+def buildEmailHtml(imaxResults, animeMovies):
     """Returns (html, [(cid, image_bytes, subtype), ...])."""
-    imax_rows = _build_imax_section(imax_results)
-    anime_rows, anime_images = _build_anime_section(anime_movies)
+    imaxRows = _buildImaxSection(imaxResults)
+    animeRows, animeImages = _buildAnimeSection(animeMovies)
 
     html = f"""
 <!DOCTYPE html>
@@ -150,7 +142,7 @@ def build_email_html(imax_results, anime_movies):
                     <tr>
                         <td style="padding:8px 0 16px;">
                             <table width="100%" cellpadding="0" cellspacing="0">
-                                {imax_rows}
+                                {imaxRows}
                             </table>
                         </td>
                     </tr>
@@ -170,7 +162,7 @@ def build_email_html(imax_results, anime_movies):
                     <tr>
                         <td style="padding:8px 0 16px;">
                             <table width="100%" cellpadding="0" cellspacing="0">
-                                {anime_rows}
+                                {animeRows}
                             </table>
                         </td>
                     </tr>
@@ -186,31 +178,28 @@ def build_email_html(imax_results, anime_movies):
 </body>
 </html>"""
 
-    return html, anime_images
+    return html, animeImages
 
 
-def send_email(imax_results, anime_movies):
-    this_week_imax = dict(list(imax_results.items())[:3]) if imax_results else {}
+def sendEmail(imaxResults, animeMovies):
+    thisWeekImax = dict(list(imaxResults.items())[:3]) if imaxResults else {}
 
-    html, images = build_email_html(this_week_imax, anime_movies)
+    html, images = buildEmailHtml(thisWeekImax, animeMovies)
 
-    # 'related' wraps HTML + inline images so cid: refs resolve
     msg = MIMEMultipart("related")
     msg["Subject"] = f"Movie Digest — {datetime.now().strftime('%B %-d, %Y')}"
     msg["From"] = GMAIL_USER
     msg["To"] = EMAIL_TO
 
-    # 'alternative' lets clients pick HTML (we only provide HTML here)
     alt = MIMEMultipart("alternative")
     msg.attach(alt)
     alt.attach(MIMEText(html, "html"))
 
-    # Attach inline images
-    for cid, img_bytes, subtype in images:
-        img_part = MIMEImage(img_bytes, _subtype=subtype)
-        img_part.add_header("Content-ID", f"<{cid}>")
-        img_part.add_header("Content-Disposition", "inline", filename=f"{cid}.{subtype}")
-        msg.attach(img_part)
+    for cid, imgBytes, subtype in images:
+        imgPart = MIMEImage(imgBytes, _subtype=subtype)
+        imgPart.add_header("Content-ID", f"<{cid}>")
+        imgPart.add_header("Content-Disposition", "inline", filename=f"{cid}.{subtype}")
+        msg.attach(imgPart)
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(GMAIL_USER, GMAIL_APP_PASSWORD)

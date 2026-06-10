@@ -5,15 +5,12 @@ import os
 import subprocess
 from datetime import datetime
 from flask import Flask, render_template, jsonify
+from constants import TWS_OUTPUT, CINEPLEX_OUTPUT, SCRAPER_DIR
 
 app = Flask(__name__)
 
-tws_JSON = "/data/showtimes.json"
-ANIME_JSON = "/data/cineplex_anime.json"
-SCRAPER_DIR = "/opt/imax-scraper"
 
-
-def _load_json(path):
+def _loadJson(path):
     if not os.path.exists(path):
         return None
     try:
@@ -26,21 +23,20 @@ def _load_json(path):
 
 @app.route("/")
 def index():
-    tws_data = _load_json(tws_JSON) or {}
-    anime_data = _load_json(ANIME_JSON) or {}
+    twsData = _loadJson(TWS_OUTPUT) or {}
+    animeData = _loadJson(CINEPLEX_OUTPUT) or {}
 
-    tws_schedule = tws_data.get("schedule", {})
-    # Only show current weekend in the web view (first 3 days)
-    tws_this_week = dict(list(tws_schedule.items())[:3])
+    twsSchedule = twsData.get("schedule", {})
+    twsThisWeek = dict(list(twsSchedule.items())[:3])
 
-    anime_movies = anime_data.get("movies", [])
+    animeMovies = animeData.get("movies", [])
 
     return render_template(
         "index.html",
-        tws_days=tws_this_week,
-        anime_movies=anime_movies,
-        tws_scraped_at=tws_data.get("scraped_at"),
-        anime_scraped_at=anime_data.get("scraped_at"),
+        tws_days=twsThisWeek,
+        anime_movies=animeMovies,
+        tws_scraped_at=twsData.get("scraped_at"),
+        anime_scraped_at=animeData.get("scraped_at"),
         now=datetime.now(),
     )
 
@@ -82,5 +78,4 @@ def refresh():
 
 
 if __name__ == "__main__":
-    # Listen on all interfaces so other machines on the LAN can reach it
     app.run(host="0.0.0.0", port=5000, debug=False)
