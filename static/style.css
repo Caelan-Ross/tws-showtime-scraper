@@ -179,6 +179,12 @@ h2 {
     margin-top: 2px;
 }
 
+.card-showtimes {
+    color: #ccc;
+    font-size: 11px;
+    margin-top: 4px;
+}
+
 @media (max-width: 600px) {
     header {
         flex-direction: column;

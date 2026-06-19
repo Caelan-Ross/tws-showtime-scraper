@@ -1,12 +1,30 @@
 """Builds and sends the combined weekly digest email."""
 
+import os
 import smtplib
 import requests
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
-from constants import GMAIL_USER, GMAIL_APP_PASSWORD, EMAIL_TO, CINEPLEX_IMAGE_HEADERS
+from constants import GMAIL_USER, GMAIL_APP_PASSWORD, EMAIL_TO, CINEPLEX_IMAGE_HEADERS, STATIC_POSTERS_DIR
+
+
+def _readLocalPoster(localPath):
+    """Returns (bytes, mime_subtype) from a local poster path, or (None, None)."""
+    if not localPath:
+        return None, None
+    absPath = os.path.join(os.path.dirname(STATIC_POSTERS_DIR), localPath)
+    if not os.path.isfile(absPath):
+        return None, None
+    ext = os.path.splitext(absPath)[1].lstrip(".").lower() or "jpg"
+    if ext == "jpeg":
+        ext = "jpg"
+    try:
+        with open(absPath, "rb") as fileHandle:
+            return fileHandle.read(), ext
+    except OSError:
+        return None, None
 
 
 def _fetchImage(url):
@@ -61,7 +79,7 @@ def _buildImaxSection(imaxResults):
     return rows
 
 
-def _buildAnimeSection(animeMovies):
+def _buildAnimeSection(animeMovies, cidPrefix="poster"):
     """Returns (html_rows, [(cid, image_bytes, subtype), ...])."""
     if not animeMovies:
         return (
@@ -79,21 +97,25 @@ def _buildAnimeSection(animeMovies):
 
     for idx, movie in enumerate(animeMovies):
         posterHtml = ""
-        posterUrl = movie.get("poster_url")
-
-        if posterUrl:
-            imgBytes, subtype = _fetchImage(posterUrl)
-            if imgBytes:
-                cid = f"poster_{idx}"
-                images.append((cid, imgBytes, subtype))
-                posterHtml = (
-                    f'<img src="cid:{cid}" alt="" width="80" '
-                    f'style="display:block;border-radius:4px;">'
-                )
+        imgBytes, subtype = _readLocalPoster(movie.get("local_poster"))
+        if not imgBytes:
+            imgBytes, subtype = _fetchImage(movie.get("poster_url"))
+        if imgBytes:
+            cid = f"{cidPrefix}_{idx}"
+            images.append((cid, imgBytes, subtype))
+            posterHtml = (
+                f'<img src="cid:{cid}" alt="" width="80" '
+                f'style="display:block;border-radius:4px;">'
+            )
 
         status = movie.get("status") or ""
         release = movie.get("release_date") or ""
+        showtimes = movie.get("showtimes") or []
         detailUrl = movie.get("detail_url") or "#"
+
+        showtimeHtml = ""
+        if showtimes:
+            showtimeHtml = f'<div style="color:#ccc;font-size:12px;margin-top:4px;">{" · ".join(showtimes)}</div>'
 
         rows += f"""
         <tr style="border-bottom:1px solid #2a2a3e;">
@@ -104,16 +126,18 @@ def _buildAnimeSection(animeMovies):
                 <a href="{detailUrl}" style="color:#7eb8f7;text-decoration:none;font-weight:600;font-size:15px;">{movie['title']}</a>
                 <div style="color:#aaa;font-size:13px;margin-top:4px;">{status}</div>
                 <div style="color:#888;font-size:12px;margin-top:2px;">{release}</div>
+                {showtimeHtml}
             </td>
         </tr>"""
 
     return rows, images
 
 
-def buildEmailHtml(imaxResults, animeMovies):
+def buildEmailHtml(imaxResults, cineplexMovies, landmarkMovies):
     """Returns (html, [(cid, image_bytes, subtype), ...])."""
     imaxRows = _buildImaxSection(imaxResults)
-    animeRows, animeImages = _buildAnimeSection(animeMovies)
+    cineplexRows, cineplexImages = _buildAnimeSection(cineplexMovies, cidPrefix="cpx")
+    landmarkRows, landmarkImages = _buildAnimeSection(landmarkMovies, cidPrefix="lmk")
 
     html = f"""
 <!DOCTYPE html>
@@ -156,13 +180,33 @@ def buildEmailHtml(imaxResults, animeMovies):
 
                     <tr>
                         <td style="padding:24px 32px 8px;">
+                            <h2 style="margin:0;color:#fff;font-size:18px;">Landmark Cinemas Anime</h2>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:8px 0 16px;">
+                            <table width="100%" cellpadding="0" cellspacing="0">
+                                {landmarkRows}
+                            </table>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0 32px 16px;">
+                            <a href="https://www.atomtickets.com/theaters/landmark-cinemas-8-st-albert/47654" style="color:#7eb8f7;font-size:13px;">View Landmark Cinemas showtimes →</a>
+                        </td>
+                    </tr>
+
+                    <tr><td style="border-top:1px solid #2a2a3e;height:1px;"></td></tr>
+
+                    <tr>
+                        <td style="padding:24px 32px 8px;">
                             <h2 style="margin:0;color:#fff;font-size:18px;">Cineplex Anime</h2>
                         </td>
                     </tr>
                     <tr>
                         <td style="padding:8px 0 16px;">
                             <table width="100%" cellpadding="0" cellspacing="0">
-                                {animeRows}
+                                {cineplexRows}
                             </table>
                         </td>
                     </tr>
@@ -178,18 +222,20 @@ def buildEmailHtml(imaxResults, animeMovies):
 </body>
 </html>"""
 
-    return html, animeImages
+    return html, cineplexImages + landmarkImages
 
 
-def sendEmail(imaxResults, animeMovies):
+def sendEmail(imaxResults, cineplexMovies, landmarkMovies):
     thisWeekImax = dict(list(imaxResults.items())[:3]) if imaxResults else {}
 
-    html, images = buildEmailHtml(thisWeekImax, animeMovies)
+    html, images = buildEmailHtml(thisWeekImax, cineplexMovies, landmarkMovies)
+
+    recipients = [addr.strip() for addr in EMAIL_TO.split(",") if addr.strip()]
 
     msg = MIMEMultipart("related")
     msg["Subject"] = f"Movie Digest — {datetime.now().strftime('%B %-d, %Y')}"
     msg["From"] = GMAIL_USER
-    msg["To"] = EMAIL_TO
+    msg["To"] = ", ".join(recipients)
 
     alt = MIMEMultipart("alternative")
     msg.attach(alt)
@@ -203,6 +249,6 @@ def sendEmail(imaxResults, animeMovies):
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-        server.sendmail(GMAIL_USER, EMAIL_TO, msg.as_string())
+        server.sendmail(GMAIL_USER, recipients, msg.as_string())
 
     print(f"[email] Sent with {len(images)} inline images.")

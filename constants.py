@@ -2,12 +2,29 @@ from config import EMAIL_TO, GMAIL_APP_PASSWORD, GMAIL_USER  # gitignored
 
 # --- Paths ---
 CINEPLEX_OUTPUT = "/data/cineplex_anime.json"
+LANDMARK_OUTPUT = "/data/landmark_anime.json"
 SCRAPER_DIR = "/opt/imax-scraper"
 STATIC_POSTERS_DIR = "/opt/imax-scraper/static/posters"
 TWS_OUTPUT = "/data/showtimes.json"
 
-# --- Cineplex ---
+# --- AniList ---
 ANILIST_URL = "https://graphql.anilist.co"
+
+# --- Landmark Cinemas ---
+LANDMARK_API_URL = "https://www.landmarkcinemas.com/umbraco/api/ListingApi/GetComingSoon"
+LANDMARK_API_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language": "en-CA,en;q=0.9",
+    "X-Requested-With": "XMLHttpRequest",
+    "Referer": "https://www.landmarkcinemas.com/",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+}
 CINEPLEX_API_KEY = "dcdac5601d864addbc2675a2e96cb1f8"  # must precede CINEPLEX_API_HEADERS
 CINEPLEX_API_HEADERS = {
     "Ocp-Apim-Subscription-Key": CINEPLEX_API_KEY,

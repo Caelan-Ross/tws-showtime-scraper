@@ -5,7 +5,7 @@ import os
 import subprocess
 from datetime import datetime
 from flask import Flask, render_template, jsonify
-from constants import TWS_OUTPUT, CINEPLEX_OUTPUT, SCRAPER_DIR
+from constants import TWS_OUTPUT, CINEPLEX_OUTPUT, LANDMARK_OUTPUT, SCRAPER_DIR
 
 app = Flask(__name__)
 
@@ -24,27 +24,28 @@ def _loadJson(path):
 @app.route("/")
 def index():
     twsData = _loadJson(TWS_OUTPUT) or {}
-    animeData = _loadJson(CINEPLEX_OUTPUT) or {}
+    cineplexData = _loadJson(CINEPLEX_OUTPUT) or {}
+    landmarkData = _loadJson(LANDMARK_OUTPUT) or {}
 
     twsSchedule = twsData.get("schedule", {})
     twsThisWeek = dict(list(twsSchedule.items())[:3])
 
-    animeMovies = animeData.get("movies", [])
-
     return render_template(
         "index.html",
         tws_days=twsThisWeek,
-        anime_movies=animeMovies,
+        cineplex_movies=cineplexData.get("movies", []),
+        landmark_movies=landmarkData.get("movies", []),
         tws_scraped_at=twsData.get("scraped_at"),
-        anime_scraped_at=animeData.get("scraped_at"),
+        cineplex_scraped_at=cineplexData.get("scraped_at"),
+        landmark_scraped_at=landmarkData.get("scraped_at"),
         now=datetime.now(),
     )
 
 
 @app.route("/refresh", methods=["POST"])
 def refresh():
-    """Trigger both scrapers. Returns JSON status."""
-    results = {"tws": None, "cineplex": None}
+    """Trigger all scrapers. Returns JSON status."""
+    results = {"tws": None, "cineplex": None, "landmark": None}
 
     try:
         subprocess.run(
@@ -73,6 +74,20 @@ def refresh():
         results["cineplex"] = f"error: {e.stderr.decode()[:200]}"
     except subprocess.TimeoutExpired:
         results["cineplex"] = "error: timeout"
+
+    try:
+        subprocess.run(
+            ["python3", "landmark_scraper.py"],
+            cwd=SCRAPER_DIR,
+            timeout=120,
+            check=True,
+            capture_output=True,
+        )
+        results["landmark"] = "ok"
+    except subprocess.CalledProcessError as e:
+        results["landmark"] = f"error: {e.stderr.decode()[:200]}"
+    except subprocess.TimeoutExpired:
+        results["landmark"] = "error: timeout"
 
     return jsonify(results)
 
